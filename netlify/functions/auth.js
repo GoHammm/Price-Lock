@@ -59,7 +59,7 @@ app.get('/auth', async (req, res) => {
     }
 
     const { access_token } = await response.json();
-    db.saveSession(SHOP, access_token);
+    await db.saveSession(SHOP, access_token);
 
     console.log('Auth successful, token saved, redirecting to app UI');
     // Also expose as env for downstream functions in same process

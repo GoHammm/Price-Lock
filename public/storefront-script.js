@@ -13,7 +13,7 @@
   'use strict';
 
   // ── Config ────────────────────────────────────────────────────────────────
-  var APP_HOST = 'REPLACE_WITH_HOST'; // Injected at build time via vite
+  var APP_HOST = 'https://sensational-kringle-35b975.netlify.app';
 
   // ── Customer context (Shopify exposes this on the storefront) ────────────
   var customer = window.ShopifyAnalytics && window.ShopifyAnalytics.meta
@@ -136,14 +136,7 @@
   function ruleShouldApply(rule, ctx) {
     if (rule.lockScope === 'entire_store') return true;
 
-    // For "select" scope, check what types are locked
-    if (ctx.pageType === 'product' && rule.lockProducts) return true;
-    if (ctx.pageType === 'collection' && rule.lockCollections) return true;
-    if (ctx.pageType === 'blog' && rule.lockBlogs) return true;
-    if (ctx.pageType === 'article' && rule.lockArticles) return true;
-    if (ctx.pageType === 'page' && rule.lockPages) return true;
-
-    // targetItems: check if current page's handle or ID is in the list
+    // If specific targetItems are set, only apply to those items
     if (rule.targetItems && rule.targetItems.length > 0) {
       var currentHandle = ctx.collectionHandle || ctx.resourceHandle || '';
       return rule.targetItems.some(function (item) {
@@ -151,6 +144,13 @@
           item === currentHandle;
       });
     }
+
+    // No specific targets = apply to ALL pages of the enabled types
+    if (ctx.pageType === 'product' && rule.lockProducts) return true;
+    if (ctx.pageType === 'collection' && rule.lockCollections) return true;
+    if (ctx.pageType === 'blog' && rule.lockBlogs) return true;
+    if (ctx.pageType === 'article' && rule.lockArticles) return true;
+    if (ctx.pageType === 'page' && rule.lockPages) return true;
 
     return false;
   }
