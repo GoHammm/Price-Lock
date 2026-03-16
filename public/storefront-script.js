@@ -171,7 +171,7 @@
 
     // ── Hide prices ───────────────────────────────────────────────────────
     if (rule.hidePrices) {
-      var priceSelector = (btnCfg && btnCfg.productPriceItemClass) || '.price';
+      var priceSelector = (btnCfg && btnCfg.productPriceItemClass) || '.price-wrapper';
       var priceEls = document.querySelectorAll(priceSelector);
       [].forEach.call(priceEls, function (el) {
         el.style.display = 'none';
@@ -196,7 +196,7 @@
         (btnCfg && btnCfg.addToCartFormClass) || 'form[action="/cart/add"]'
       );
       [].forEach.call(addToCartForms, function (form) {
-        var submitBtns = form.querySelectorAll('[type="submit"], [name="add"]');
+        var submitBtns = form.querySelectorAll('[type="submit"][name="add"], .product-form__submit');
         [].forEach.call(submitBtns, function (btn) {
           btn.style.display = 'none';
         });

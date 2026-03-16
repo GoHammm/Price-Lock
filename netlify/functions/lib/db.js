@@ -205,9 +205,9 @@ const DEFAULT_BTN = {
   customRedirectUrl: '',
   productGridContainerClass: '.card-information',
   productCardClass: '',
-  productPriceItemClass: '.price',
-  addToCartFormClass: '',
-  quickAddButtonClass: '',
+  productPriceItemClass: '.price-wrapper',
+  addToCartFormClass: 'form[action="/cart/add"]',
+  quickAddButtonClass: '.quick-add__submit',
   bulkAddButtonClass: '',
 };
 
