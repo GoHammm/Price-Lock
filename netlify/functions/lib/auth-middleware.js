@@ -9,13 +9,21 @@ const db = require('./db');
  * falls back to checking the shop's stored token.
  */
 function requireAuth(req, res, next) {
-  const shop = req.query.shop || req.headers['x-shopify-shop'];
+  const shop = req.query.shop || req.headers['x-shopify-shop'] || process.env.SHOP;
 
   if (!shop) {
     return res.status(401).json({ error: 'Missing shop parameter' });
   }
 
-  const session = db.getSession(shop);
+  // Check DB session first
+  let session = db.getSession(shop);
+
+  // Fall back to SHOPIFY_ACCESS_TOKEN env var (for hardcoded / pre-fetched tokens)
+  if ((!session || !session.token) && process.env.SHOPIFY_ACCESS_TOKEN) {
+    db.saveSession(shop, process.env.SHOPIFY_ACCESS_TOKEN);
+    session = db.getSession(shop);
+  }
+
   if (!session || !session.token) {
     return res.status(401).json({ error: 'Not authenticated', redirectTo: `/auth?shop=${shop}` });
   }

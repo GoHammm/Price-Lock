@@ -1,105 +1,73 @@
 'use strict';
 
 /**
- * Shopify OAuth handler
- * Routes:
- *   GET /auth         → Begin OAuth (redirect to Shopify)
- *   GET /auth/callback → Handle OAuth callback, save token
+ * Auth handler — Shopify Dev Dashboard client credentials grant
+ *
+ * The new Dev Dashboard does NOT use OAuth redirects.
+ * The app requests a token directly using client_id + client_secret.
+ *
+ * GET /auth  → fetch token via client credentials, save session, redirect to app UI
  */
 
 const express = require('express');
-const crypto = require('crypto');
-const axios = require('axios');
 const serverless = require('serverless-http');
 const db = require('./lib/db');
 
 const app = express();
 app.use(express.json());
 
-const {
-  SHOPIFY_API_KEY,
-  SHOPIFY_API_SECRET,
-  HOST,
-  SHOPIFY_API_VERSION = '2025-01',
-} = process.env;
+app.get('/auth', async (req, res) => {
+  const CLIENT_ID = process.env.SHOPIFY_API_KEY;
+  const CLIENT_SECRET = process.env.SHOPIFY_API_SECRET;
+  const SHOP = process.env.SHOP || req.query.shop;
+  const HOST = process.env.HOST;
 
-// ── Begin OAuth ───────────────────────────────────────────────────────────────
-app.get('/auth', (req, res) => {
-  const shop = req.query.shop || process.env.SHOP;
-  if (!shop) {
-    return res.status(400).send('Missing shop parameter');
+  // Debug — log what we have (remove after confirmed working)
+  console.log('AUTH called — CLIENT_ID:', CLIENT_ID ? 'SET' : 'MISSING');
+  console.log('AUTH called — CLIENT_SECRET:', CLIENT_SECRET ? 'SET' : 'MISSING');
+  console.log('AUTH called — SHOP:', SHOP);
+  console.log('AUTH called — HOST:', HOST);
+
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    return res.status(500).send(
+      `Missing credentials. CLIENT_ID: ${CLIENT_ID ? 'OK' : 'MISSING'}, CLIENT_SECRET: ${CLIENT_SECRET ? 'OK' : 'MISSING'}`
+    );
   }
 
-  const state = crypto.randomBytes(16).toString('hex');
-  const redirectUri = `${HOST}/auth/callback`;
-  const scopes = [
-    'read_products',
-    'read_collections',
-    'read_customers',
-    'write_script_tags',
-    'read_script_tags',
-  ].join(',');
-
-  const installUrl =
-    `https://${shop}/admin/oauth/authorize` +
-    `?client_id=${SHOPIFY_API_KEY}` +
-    `&scope=${scopes}` +
-    `&state=${state}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}`;
-
-  // NOTE: In production you'd store `state` in a temporary DB/cookie to prevent CSRF.
-  // For a single-store private app this is acceptable.
-  res.redirect(installUrl);
-});
-
-// ── OAuth Callback ────────────────────────────────────────────────────────────
-app.get('/auth/callback', async (req, res) => {
-  const { shop, hmac, code } = req.query;
-
-  if (!shop || !hmac || !code) {
-    return res.status(400).send('Missing required parameters');
+  if (!SHOP) {
+    return res.status(400).send('Missing SHOP env variable');
   }
 
-  // Validate HMAC
-  const params = { ...req.query };
-  delete params.hmac;
-  const message = Object.keys(params)
-    .sort()
-    .map((k) => `${k}=${params[k]}`)
-    .join('&');
-
-  const generated = crypto
-    .createHmac('sha256', SHOPIFY_API_SECRET)
-    .update(message)
-    .digest('hex');
-
-  if (
-    generated.length !== hmac.length ||
-    !crypto.timingSafeEqual(Buffer.from(generated), Buffer.from(hmac))
-  ) {
-    return res.status(403).send('HMAC validation failed');
-  }
-
-  // Exchange code for access token
   try {
-    const { data } = await axios.post(
-      `https://${shop}/admin/oauth/access_token`,
+    const response = await fetch(
+      `https://${SHOP}/admin/oauth/access_token`,
       {
-        client_id: SHOPIFY_API_KEY,
-        client_secret: SHOPIFY_API_SECRET,
-        code,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: CLIENT_ID,
+          client_secret: CLIENT_SECRET,
+        }),
       }
     );
 
-    const token = data.access_token;
-    db.saveSession(shop, token);
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('Token request failed:', response.status, text);
+      return res.status(500).send(`Token request failed: ${response.status} — ${text}`);
+    }
 
-    // Redirect to the app admin UI
-    const host = Buffer.from(`${shop}/admin`).toString('base64');
-    res.redirect(`/?shop=${shop}&host=${host}`);
+    const { access_token } = await response.json();
+    db.saveSession(SHOP, access_token);
+
+    console.log('Auth successful, token saved, redirecting to app UI');
+    // Also expose as env for downstream functions in same process
+    process.env.SHOPIFY_ACCESS_TOKEN = access_token;
+    res.redirect('/');
   } catch (err) {
-    console.error('OAuth callback error:', err.response?.data || err.message);
-    res.status(500).send('Authentication failed. Check server logs.');
+    console.error('Auth error:', err.message);
+    res.status(500).send(`Authentication failed: ${err.message}`);
   }
 });
 
