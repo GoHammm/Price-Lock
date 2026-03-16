@@ -34,6 +34,44 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', version: '2.0.0' });
 });
 
+// ── Debug (remove after confirmed working) ───────────────────────────────────
+app.get('/api/debug', async (_req, res) => {
+  const results = {};
+  // Check env vars present
+  results.env = {
+    SHOPIFY_API_KEY: !!process.env.SHOPIFY_API_KEY,
+    SHOPIFY_API_SECRET: !!process.env.SHOPIFY_API_SECRET,
+    SHOPIFY_ACCESS_TOKEN: !!process.env.SHOPIFY_ACCESS_TOKEN,
+    SHOP: process.env.SHOP || 'MISSING',
+    HOST: process.env.HOST || 'MISSING',
+    UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL || 'MISSING',
+    UPSTASH_REDIS_REST_TOKEN: !!process.env.UPSTASH_REDIS_REST_TOKEN,
+  };
+  // Test Redis
+  try {
+    await db.getAppSettings();
+    results.redis = 'OK';
+  } catch (e) {
+    results.redis = 'FAILED: ' + e.message;
+  }
+  // Test Shopify token validity
+  try {
+    const token = process.env.SHOPIFY_ACCESS_TOKEN;
+    const shop = process.env.SHOP;
+    if (token && shop) {
+      const r = await fetch(`https://${shop}/admin/api/2025-01/shop.json`, {
+        headers: { 'X-Shopify-Access-Token': token }
+      });
+      results.shopifyToken = r.ok ? 'OK' : 'EXPIRED or INVALID (status ' + r.status + ')';
+    } else {
+      results.shopifyToken = 'MISSING env vars';
+    }
+  } catch (e) {
+    results.shopifyToken = 'FAILED: ' + e.message;
+  }
+  res.json(results);
+});
+
 // ── Public config endpoint (consumed by storefront script) ────────────────────
 app.get('/api/config.json', async (_req, res) => {
   try {
