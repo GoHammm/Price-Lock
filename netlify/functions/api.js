@@ -36,6 +36,35 @@ app.use(cors());
 app.use(express.json());
 
 const HOST = process.env.HOST || '';
+const SHOP = process.env.SHOP || '';
+
+/**
+ * Auto-register the script tag on cold start if:
+ *  - we have a valid token (SHOPIFY_ACCESS_TOKEN env var)
+ *  - the script tag hasn't been registered yet
+ * Runs once per Netlify function instance.
+ */
+let autoRegisterDone = false;
+async function autoRegisterScriptTag() {
+  if (autoRegisterDone) return;
+  autoRegisterDone = true;
+  try {
+    const token = process.env.SHOPIFY_ACCESS_TOKEN;
+    const shop = SHOP;
+    if (!token || !shop || !HOST) return;
+    const settings = db.getAppSettings();
+    if (settings.script_tag_id) return; // already registered
+    console.log('Auto-registering storefront script tag...');
+    const tag = await shopify.registerScriptTag(shop, token, HOST);
+    db.updateAppSettings({ scriptTagId: String(tag.id) });
+    console.log('Script tag auto-registered:', tag.id);
+  } catch (err) {
+    console.error('Auto-register failed (non-fatal):', err.message);
+  }
+}
+
+// Kick off auto-register immediately (don't await — non-blocking)
+autoRegisterScriptTag();
 
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
@@ -163,6 +192,28 @@ app.delete('/api/shopify/script-tag', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete script tag' });
   }
+});
+
+// ── Clean Uninstall ───────────────────────────────────────────────────────────
+// Call this before removing the app. Removes the script tag from Shopify so
+// it doesn't linger on the storefront after the app is gone.
+app.post('/api/shopify/uninstall', requireAuth, async (req, res) => {
+  const results = { scriptTag: false, errors: [] };
+  try {
+    const settings = db.getAppSettings();
+    if (settings.script_tag_id) {
+      await shopify.deleteScriptTag(req.shop, req.token, settings.script_tag_id);
+      db.updateAppSettings({ scriptTagId: '' });
+      results.scriptTag = true;
+    } else {
+      // No stored ID — search Shopify directly and remove any matching tags
+      const removed = await shopify.removeAllScriptTags(req.shop, req.token, HOST);
+      results.scriptTag = removed;
+    }
+  } catch (err) {
+    results.errors.push('Script tag: ' + err.message);
+  }
+  res.json({ success: results.errors.length === 0, results });
 });
 
 module.exports.handler = serverless(app);

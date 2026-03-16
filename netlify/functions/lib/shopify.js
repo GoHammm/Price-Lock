@@ -66,6 +66,27 @@ async function deleteScriptTag(shop, token, scriptTagId) {
   }
 }
 
+/**
+ * Find and remove ALL script tags pointing to our host.
+ * Used as a fallback during uninstall if the stored ID is missing.
+ */
+async function removeAllScriptTags(shop, token, host) {
+  const client = shopifyClient(shop, token);
+  try {
+    const scriptUrl = `${host}/storefront-script.js`;
+    const { script_tags } = await client.get(
+      '/script_tags.json?src=' + encodeURIComponent(scriptUrl)
+    );
+    if (!script_tags || script_tags.length === 0) return true;
+    await Promise.all(
+      script_tags.map((t) => client.delete(`/script_tags/${t.id}.json`).catch(() => {}))
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function getCollections(shop, token) {
   const client = shopifyClient(shop, token);
   // Get both custom and smart collections
@@ -104,6 +125,7 @@ module.exports = {
   shopifyClient,
   registerScriptTag,
   deleteScriptTag,
+  removeAllScriptTags,
   getCollections,
   getProducts,
   getCustomerTags,

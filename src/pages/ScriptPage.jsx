@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Page, Layout, Card, Text, Button, Banner, BlockStack,
-  InlineStack, Badge, Spinner,
+  InlineStack, Badge, Spinner, Divider, Box,
 } from '@shopify/polaris';
 import { api } from '../lib/api';
 
@@ -12,6 +12,7 @@ export default function ScriptPage() {
   const [loading, setLoading] = useState(true);
   const [registering, setRegistering] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
   const [message, setMessage] = useState(null);
 
   const load = () => {
@@ -53,10 +54,36 @@ export default function ScriptPage() {
     }
   };
 
-  const manualScriptTag = `<script src="${HOST}/storefront-script.js" defer></script>`;
+  const handleUninstall = async () => {
+    if (!window.confirm(
+      'This will remove the storefront script from your Shopify store.\n\n' +
+      'Do this BEFORE deleting the app in the Shopify Dev Dashboard to ensure no broken code is left on your storefront.'
+    )) return;
+    setUninstalling(true);
+    setMessage(null);
+    try {
+      const result = await api.uninstall();
+      if (result.success) {
+        setMessage({
+          type: 'success',
+          text: 'Cleanup complete. The storefront script has been removed from your store. You can now safely delete this app in the Shopify Dev Dashboard.',
+        });
+      } else {
+        setMessage({
+          type: 'warning',
+          text: 'Cleanup finished with some issues: ' + (result.results?.errors?.join(', ') || 'unknown'),
+        });
+      }
+      load();
+    } catch (e) {
+      setMessage({ type: 'critical', text: 'Uninstall cleanup failed: ' + e.message });
+    } finally {
+      setUninstalling(false);
+    }
+  };
 
-  const themeSnippet = `{% comment %} Rothley Price Lock — add to theme.liquid <head> {% endcomment %}
-<script src="{{ '${HOST}/storefront-script.js' }}" defer></script>`;
+  const manualScriptTag = `<script src="${HOST}/storefront-script.js" defer></script>`;
+  const themeSnippet = `{% comment %} Rothley Price Lock — add to theme.liquid <head> {% endcomment %}\n<script src="{{ '${HOST}/storefront-script.js' }}" defer></script>`;
 
   if (loading) {
     return (
@@ -80,6 +107,18 @@ export default function ScriptPage() {
           <Layout.Section>
             <Banner tone={message.type} onDismiss={() => setMessage(null)}>
               <p>{message.text}</p>
+            </Banner>
+          </Layout.Section>
+        )}
+
+        {/* Auto-registration info banner */}
+        {!isRegistered && (
+          <Layout.Section>
+            <Banner tone="info">
+              <p>
+                <strong>Auto-registration:</strong> The script tag is automatically registered when the app
+                first loads. If the status below shows "Not Installed", click Register to install it manually.
+              </p>
             </Banner>
           </Layout.Section>
         )}
@@ -156,10 +195,7 @@ export default function ScriptPage() {
                 <div style={{ background: '#1a1a1a', borderRadius: '8px', padding: '16px', fontFamily: 'monospace', fontSize: '13px', color: '#e2e8f0', overflowX: 'auto' }}>
                   <pre style={{ margin: 0 }}>{manualScriptTag}</pre>
                 </div>
-                <Button
-                  size="slim"
-                  onClick={() => navigator.clipboard.writeText(manualScriptTag)}
-                >
+                <Button size="slim" onClick={() => navigator.clipboard.writeText(manualScriptTag)}>
                   Copy
                 </Button>
               </BlockStack>
@@ -169,10 +205,7 @@ export default function ScriptPage() {
                 <div style={{ background: '#1a1a1a', borderRadius: '8px', padding: '16px', fontFamily: 'monospace', fontSize: '13px', color: '#e2e8f0', overflowX: 'auto' }}>
                   <pre style={{ margin: 0 }}>{themeSnippet}</pre>
                 </div>
-                <Button
-                  size="slim"
-                  onClick={() => navigator.clipboard.writeText(themeSnippet)}
-                >
+                <Button size="slim" onClick={() => navigator.clipboard.writeText(themeSnippet)}>
                   Copy
                 </Button>
               </BlockStack>
@@ -197,6 +230,38 @@ export default function ScriptPage() {
                 onClick={() => window.open(`${HOST}/api/config.json`, '_blank')}
               >
                 View Current Config
+              </Button>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Uninstall / cleanup section */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="100">
+                <Text variant="headingMd">Before You Uninstall</Text>
+                <Text tone="subdued">
+                  If you plan to remove this app from your Shopify store, click the button below first.
+                  This cleans up the storefront script so it doesn't leave broken code running on your store
+                  after the app is deleted.
+                </Text>
+              </BlockStack>
+
+              <Banner tone="warning">
+                <p>
+                  <strong>Always run this cleanup before deleting the app</strong> in the Shopify Dev Dashboard.
+                  If you delete the app without cleaning up, the script tag will keep trying to load from a
+                  URL that no longer responds.
+                </p>
+              </Banner>
+
+              <Button
+                tone="critical"
+                loading={uninstalling}
+                onClick={handleUninstall}
+              >
+                Prepare for Uninstall — Remove All App Code from Store
               </Button>
             </BlockStack>
           </Card>

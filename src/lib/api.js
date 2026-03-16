@@ -54,6 +54,9 @@ export const api = {
   // Script tag
   registerScriptTag: () => request('POST', '/api/shopify/script-tag/register'),
   deleteScriptTag: () => request('DELETE', '/api/shopify/script-tag'),
+
+  // Clean uninstall — removes script tag from Shopify before app removal
+  uninstall: () => request('POST', '/api/shopify/uninstall'),
 };
 
 export { shop };
