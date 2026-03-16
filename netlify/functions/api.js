@@ -39,31 +39,26 @@ const HOST = process.env.HOST || '';
 const SHOP = process.env.SHOP || '';
 
 /**
- * Auto-register the script tag on cold start if:
- *  - we have a valid token (SHOPIFY_ACCESS_TOKEN env var)
- *  - the script tag hasn't been registered yet
- * Runs once per Netlify function instance.
+ * Auto-register the script tag on every cold start.
+ * Checks Shopify directly (not the local DB) so it works
+ * even after Netlify resets /tmp between invocations.
  */
-let autoRegisterDone = false;
 async function autoRegisterScriptTag() {
-  if (autoRegisterDone) return;
-  autoRegisterDone = true;
   try {
     const token = process.env.SHOPIFY_ACCESS_TOKEN;
     const shop = SHOP;
     if (!token || !shop || !HOST) return;
-    const settings = db.getAppSettings();
-    if (settings.script_tag_id) return; // already registered
-    console.log('Auto-registering storefront script tag...');
+    console.log('Checking/auto-registering storefront script tag...');
+    // registerScriptTag already checks if one exists before creating
     const tag = await shopify.registerScriptTag(shop, token, HOST);
     db.updateAppSettings({ scriptTagId: String(tag.id) });
-    console.log('Script tag auto-registered:', tag.id);
+    console.log('Script tag confirmed/registered:', tag.id);
   } catch (err) {
     console.error('Auto-register failed (non-fatal):', err.message);
   }
 }
 
-// Kick off auto-register immediately (don't await — non-blocking)
+// Kick off on every cold start — non-blocking
 autoRegisterScriptTag();
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -87,8 +82,33 @@ app.get('/api/config.json', (_req, res) => {
 });
 
 // ── App Settings ──────────────────────────────────────────────────────────────
-app.get('/api/settings', requireAuth, (_req, res) => {
-  res.json(db.getAppSettings());
+// Always verify script tag status live from Shopify so the dashboard
+// shows the real state even after /tmp resets on cold starts.
+app.get('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const scriptUrl = `${HOST}/storefront-script.js`;
+    const token = req.token || process.env.SHOPIFY_ACCESS_TOKEN;
+    const shop = req.shop || SHOP;
+    let scriptTagId = null;
+    try {
+      const { script_tags } = await shopify.shopifyClient(shop, token)
+        .get('/script_tags.json?src=' + encodeURIComponent(scriptUrl));
+      if (script_tags && script_tags.length > 0) {
+        scriptTagId = String(script_tags[0].id);
+        // Keep local DB in sync
+        db.updateAppSettings({ scriptTagId });
+      } else {
+        db.updateAppSettings({ scriptTagId: '' });
+      }
+    } catch {
+      // If Shopify call fails, fall back to local DB
+      scriptTagId = db.getAppSettings().script_tag_id || null;
+    }
+    const settings = db.getAppSettings();
+    res.json({ ...settings, script_tag_id: scriptTagId });
+  } catch (err) {
+    res.json(db.getAppSettings());
+  }
 });
 
 app.post('/api/settings', requireAuth, (req, res) => {
