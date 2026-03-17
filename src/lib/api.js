@@ -52,6 +52,7 @@ export const api = {
   getCustomerTags: () => request('GET', '/api/shopify/customer-tags'),
 
   // Script tag
+  getScriptStatus: () => request('GET', '/api/script-status'),
   registerScriptTag: () => request('POST', '/api/shopify/script-tag/register'),
   deleteScriptTag: () => request('DELETE', '/api/shopify/script-tag'),
 

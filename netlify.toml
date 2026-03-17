@@ -8,8 +8,12 @@
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules = ["better-sqlite3"]
-  included_files = ["db/**"]
+
+[[headers]]
+  for = "/api/config.json"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Cache-Control = "no-cache, no-store, must-revalidate"
 
 [[redirects]]
   from = "/api/*"

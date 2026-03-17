@@ -17,7 +17,8 @@ export default function ScriptPage() {
 
   const load = () => {
     setLoading(true);
-    api.getSettings()
+    // Use dedicated script-status endpoint — fast Redis-only lookup, no Shopify timeout
+    api.getScriptStatus()
       .then(setSettings)
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -95,7 +96,9 @@ export default function ScriptPage() {
     );
   }
 
-  const isRegistered = !!(settings && settings.script_tag_id);
+  // script-status endpoint returns { registered, scriptTagId }
+  const isRegistered = !!(settings && settings.registered);
+  const scriptTagId = settings && settings.scriptTagId;
 
   return (
     <Page
@@ -139,9 +142,9 @@ export default function ScriptPage() {
                 </Badge>
               </InlineStack>
 
-              {isRegistered && settings.script_tag_id && (
+              {isRegistered && scriptTagId && (
                 <Text tone="subdued" variant="bodySm">
-                  Script Tag ID: {settings.script_tag_id}
+                  Script Tag ID: {scriptTagId}
                 </Text>
               )}
 

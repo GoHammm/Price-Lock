@@ -63,9 +63,9 @@ const DEFAULT_BTN = {
   customRedirectUrl: '',
   productGridContainerClass: '.card-information',
   productCardClass: '',
-  productPriceItemClass: '.price',
-  addToCartFormClass: '',
-  quickAddButtonClass: '',
+  productPriceItemClass: '.price-wrapper',
+  addToCartFormClass: 'form[action="/cart/add"]',
+  quickAddButtonClass: '.quick-add__submit',
   bulkAddButtonClass: '',
 };
 
@@ -639,8 +639,10 @@ export default function RuleEditor({ initialTab = 0 }) {
                   <BlockStack gap="500">
                     <Banner tone="info">
                       <p>
-                        If you use a custom Shopify theme, use these CSS selectors to tell the script
-                        exactly which elements to target. Defaults work for the Dawn theme.
+                        These CSS selectors tell the script which elements to target. The defaults
+                        are set for the <strong>Sydney theme</strong>. If prices or buttons are not
+                        being hidden on your store, inspect the page source and update these to match
+                        your theme's class names.
                       </p>
                     </Banner>
 

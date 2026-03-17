@@ -74,7 +74,11 @@ app.get('/api/debug', async (_req, res) => {
 
 // ── Public config endpoint (consumed by storefront script) ────────────────────
 app.get('/api/config.json', async (_req, res) => {
+  // Set CORS headers so the Shopify storefront can fetch this
+  res.setHeader('Access-Control-Allow-Origin', '*');
   try {
+    // Seed default rule if Redis is empty (first deploy / fresh start)
+    await db.seedIfEmpty();
     const rules = (await db.getRules()).filter((r) => r.enabled);
     const configs = {};
     for (const r of rules) {
@@ -87,30 +91,25 @@ app.get('/api/config.json', async (_req, res) => {
   }
 });
 
-// ── App Settings ──────────────────────────────────────────────────────────────
-app.get('/api/settings', requireAuth, async (req, res) => {
+// ── Script Status (fast Redis-only, used by UI badge) ────────────────────────
+app.get('/api/script-status', requireAuth, async (_req, res) => {
   try {
-    const scriptUrl = `${HOST}/storefront-script.js`;
-    const token = req.token || process.env.SHOPIFY_ACCESS_TOKEN;
-    const shop = req.shop || SHOP;
-    let scriptTagId = null;
-    try {
-      const { script_tags } = await shopify.shopifyClient(shop, token)
-        .get('/script_tags.json?src=' + encodeURIComponent(scriptUrl));
-      if (script_tags && script_tags.length > 0) {
-        scriptTagId = String(script_tags[0].id);
-        await db.updateAppSettings({ scriptTagId });
-      } else {
-        await db.updateAppSettings({ scriptTagId: '' });
-      }
-    } catch {
-      const s = await db.getAppSettings();
-      scriptTagId = s.script_tag_id || null;
-    }
     const settings = await db.getAppSettings();
-    res.json({ ...settings, script_tag_id: scriptTagId });
+    const registered = !!(settings && settings.script_tag_id);
+    res.json({ registered, scriptTagId: settings.script_tag_id || null });
   } catch (err) {
-    res.json(await db.getAppSettings());
+    res.json({ registered: false, scriptTagId: null });
+  }
+});
+
+// ── App Settings ──────────────────────────────────────────────────────────────
+app.get('/api/settings', requireAuth, async (_req, res) => {
+  try {
+    // Fast Redis-only read — no Shopify API call to avoid timeouts
+    const settings = await db.getAppSettings();
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

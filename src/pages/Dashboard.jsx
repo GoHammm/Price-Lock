@@ -14,11 +14,12 @@ export default function Dashboard() {
   const [scriptRegistered, setScriptRegistered] = useState(false);
 
   useEffect(() => {
-    Promise.all([api.getRules(), api.getSettings()])
-      .then(([r, s]) => {
+    Promise.all([api.getRules(), api.getSettings(), api.getScriptStatus()])
+      .then(([r, s, status]) => {
         setRules(r || []);
         setSettings(s || {});
-        setScriptRegistered(!!(s && s.script_tag_id));
+        // Use dedicated script-status endpoint — fast Redis-only, no Shopify call
+        setScriptRegistered(!!(status && status.registered));
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -27,7 +28,9 @@ export default function Dashboard() {
   const handleRegisterScript = async () => {
     try {
       await api.registerScriptTag();
-      setScriptRegistered(true);
+      // Re-check status from Redis after registration
+      const status = await api.getScriptStatus();
+      setScriptRegistered(!!(status && status.registered));
     } catch (e) {
       alert('Failed to register script: ' + e.message);
     }
