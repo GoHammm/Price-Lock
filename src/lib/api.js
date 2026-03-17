@@ -51,6 +51,11 @@ export const api = {
   getProducts: () => request('GET', '/api/shopify/products'),
   getCustomerTags: () => request('GET', '/api/shopify/customer-tags'),
 
+  // Theme snippet (flash-fix)
+  getThemeStatus: () => request('GET', '/api/theme/status'),
+  injectThemeSnippet: (themeId) => request('POST', '/api/theme/inject', themeId ? { themeId } : {}),
+  removeThemeSnippet: (themeId) => request('POST', '/api/theme/remove', themeId ? { themeId } : {}),
+
   // Script tag
   getScriptStatus: () => request('GET', '/api/script-status'),
   registerScriptTag: () => request('POST', '/api/shopify/script-tag/register'),

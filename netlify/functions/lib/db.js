@@ -61,6 +61,8 @@ const DEFAULT_SETTINGS = {
   shop: '',
   app_enabled: 1,
   script_tag_id: null,
+  themeSnippetInjected: false,
+  themeId: null,
   updated_at: Math.floor(Date.now() / 1000),
 };
 
@@ -75,6 +77,8 @@ async function updateAppSettings(data) {
     shop: data.shop !== undefined ? data.shop : current.shop,
     app_enabled: data.appEnabled !== undefined ? (data.appEnabled ? 1 : 0) : current.app_enabled,
     script_tag_id: data.scriptTagId !== undefined ? (data.scriptTagId || null) : current.script_tag_id,
+    themeSnippetInjected: data.themeSnippetInjected !== undefined ? !!data.themeSnippetInjected : (current.themeSnippetInjected || false),
+    themeId: data.themeId !== undefined ? (data.themeId || null) : (current.themeId || null),
     updated_at: Math.floor(Date.now() / 1000),
   };
   await redisSet('rpl:settings', updated);

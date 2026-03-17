@@ -247,6 +247,127 @@ app.delete('/api/shopify/script-tag', requireAuth, async (req, res) => {
   }
 });
 
+// ── Theme Snippet Inject / Remove (flash-fix CSS) ───────────────────────────
+// The snippet is injected as the very first line of theme.liquid <head> so
+// prices are hidden before the browser paints a single pixel.
+
+const SNIPPET_START = '<!-- rpl-flash-fix:start -->';
+const SNIPPET_END   = '<!-- rpl-flash-fix:end -->';
+
+function buildFlashFixSnippet() {
+  return `${SNIPPET_START}
+{%- comment -%}Rothley Price Lock — flash-fix CSS (do not edit this block){%- endcomment -%}
+<style id="rpl-flash-fix">
+  .rpl-hiding .price-wrapper,
+  .rpl-hiding .price,
+  .rpl-hiding .product__price,
+  .rpl-hiding [class*="Price__"],
+  .rpl-hiding form[action="/cart/add"] [type="submit"],
+  .rpl-hiding form[action="/cart/add"] button[name="add"],
+  .rpl-hiding .product-form__submit,
+  .rpl-hiding .quick-add__submit {
+    visibility: hidden !important;
+  }
+</style>
+<script>document.documentElement.className += ' rpl-hiding';</script>
+${SNIPPET_END}`;
+}
+
+async function getThemeAsset(shop, token, themeId, assetKey) {
+  const url = `https://${shop}/admin/api/2025-01/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(assetKey)}`;
+  const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
+  if (!r.ok) throw new Error(`Asset fetch failed: ${r.status}`);
+  const data = await r.json();
+  return data.asset && data.asset.value ? data.asset.value : null;
+}
+
+async function putThemeAsset(shop, token, themeId, assetKey, value) {
+  const url = `https://${shop}/admin/api/2025-01/themes/${themeId}/assets.json`;
+  const r = await fetch(url, {
+    method: 'PUT',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset: { key: assetKey, value } }),
+  });
+  if (!r.ok) {
+    const body = await r.text();
+    throw new Error(`Asset update failed: ${r.status} ${body}`);
+  }
+  return true;
+}
+
+async function getMainThemeId(shop, token) {
+  // Check stored theme ID first
+  const settings = await db.getAppSettings();
+  if (settings.themeId) return settings.themeId;
+  // Otherwise fetch from Shopify
+  const url = `https://${shop}/admin/api/2025-01/themes.json`;
+  const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
+  if (!r.ok) throw new Error('Could not fetch themes');
+  const data = await r.json();
+  const main = (data.themes || []).find(t => t.role === 'main');
+  if (!main) throw new Error('No main theme found');
+  return String(main.id);
+}
+
+app.post('/api/theme/inject', requireAuth, async (req, res) => {
+  try {
+    const shop = req.shop;
+    const token = req.token;
+    const themeId = req.body.themeId || await getMainThemeId(shop, token);
+    let liquid = await getThemeAsset(shop, token, themeId, 'layout/theme.liquid');
+    if (!liquid) return res.status(404).json({ error: 'theme.liquid not found' });
+
+    // Remove any existing snippet first
+    const re = new RegExp(`${SNIPPET_START}[\\s\\S]*?${SNIPPET_END}\\n?`, 'g');
+    liquid = liquid.replace(re, '');
+
+    // Inject as very first thing inside <head>
+    const snippet = buildFlashFixSnippet() + '\n';
+    if (liquid.includes('<head>')) {
+      liquid = liquid.replace('<head>', '<head>\n' + snippet);
+    } else {
+      liquid = snippet + liquid; // fallback: prepend
+    }
+
+    await putThemeAsset(shop, token, themeId, 'layout/theme.liquid', liquid);
+    await db.updateAppSettings({ themeSnippetInjected: true, themeId: String(themeId) });
+    res.json({ success: true, themeId });
+  } catch (err) {
+    console.error('Theme inject error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/theme/remove', requireAuth, async (req, res) => {
+  try {
+    const shop = req.shop;
+    const token = req.token;
+    const themeId = req.body.themeId || await getMainThemeId(shop, token);
+    let liquid = await getThemeAsset(shop, token, themeId, 'layout/theme.liquid');
+    if (!liquid) return res.status(404).json({ error: 'theme.liquid not found' });
+
+    const re = new RegExp(`${SNIPPET_START}[\\s\\S]*?${SNIPPET_END}\\n?`, 'g');
+    const cleaned = liquid.replace(re, '');
+    // Also clean up the extra \n we added after <head>
+    const final = cleaned.replace('<head>\n\n', '<head>\n');
+    await putThemeAsset(shop, token, themeId, 'layout/theme.liquid', final);
+    await db.updateAppSettings({ themeSnippetInjected: false });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Theme remove error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/theme/status', requireAuth, async (_req, res) => {
+  try {
+    const settings = await db.getAppSettings();
+    res.json({ injected: !!(settings && settings.themeSnippetInjected) });
+  } catch (err) {
+    res.json({ injected: false });
+  }
+});
+
 // ── Clean Uninstall ───────────────────────────────────────────────────────────
 app.post('/api/shopify/uninstall', requireAuth, async (req, res) => {
   const results = { scriptTag: false, errors: [] };

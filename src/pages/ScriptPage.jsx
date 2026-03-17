@@ -1,25 +1,30 @@
 import React, { useEffect, useState } from 'react';
 import {
   Page, Layout, Card, Text, Button, Banner, BlockStack,
-  InlineStack, Badge, Spinner, Divider, Box,
+  InlineStack, Badge, Spinner, Box,
 } from '@shopify/polaris';
 import { api } from '../lib/api';
 
 const HOST = import.meta.env.VITE_HOST || window.location.origin;
 
 export default function ScriptPage() {
-  const [settings, setSettings] = useState(null);
+  const [scriptStatus, setScriptStatus] = useState(null);
+  const [themeStatus, setThemeStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [registering, setRegistering] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [injecting, setInjecting] = useState(false);
+  const [removingSnippet, setRemovingSnippet] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
   const [message, setMessage] = useState(null);
 
   const load = () => {
     setLoading(true);
-    // Use dedicated script-status endpoint — fast Redis-only lookup, no Shopify timeout
-    api.getScriptStatus()
-      .then(setSettings)
+    Promise.all([api.getScriptStatus(), api.getThemeStatus()])
+      .then(([s, t]) => {
+        setScriptStatus(s);
+        setThemeStatus(t);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   };
@@ -31,7 +36,7 @@ export default function ScriptPage() {
     setMessage(null);
     try {
       await api.registerScriptTag();
-      setMessage({ type: 'success', text: 'Storefront script registered successfully. It is now live on your store.' });
+      setMessage({ type: 'success', text: 'Storefront script registered successfully.' });
       load();
     } catch (e) {
       setMessage({ type: 'critical', text: 'Failed to register script: ' + e.message });
@@ -41,7 +46,7 @@ export default function ScriptPage() {
   };
 
   const handleRemove = async () => {
-    if (!window.confirm('Remove the storefront script? Price lock rules will stop working on the store immediately.')) return;
+    if (!window.confirm('Remove the storefront script? Price lock rules will stop working immediately.')) return;
     setRemoving(true);
     setMessage(null);
     try {
@@ -55,25 +60,50 @@ export default function ScriptPage() {
     }
   };
 
+  const handleInjectSnippet = async () => {
+    setInjecting(true);
+    setMessage(null);
+    try {
+      await api.injectThemeSnippet();
+      setMessage({ type: 'success', text: 'Flash-fix snippet added to your theme. Prices will now be hidden instantly with zero flash.' });
+      load();
+    } catch (e) {
+      setMessage({ type: 'critical', text: 'Failed to inject snippet: ' + e.message });
+    } finally {
+      setInjecting(false);
+    }
+  };
+
+  const handleRemoveSnippet = async () => {
+    if (!window.confirm('Remove the flash-fix snippet from your theme?')) return;
+    setRemovingSnippet(true);
+    setMessage(null);
+    try {
+      await api.removeThemeSnippet();
+      setMessage({ type: 'success', text: 'Flash-fix snippet removed from theme.' });
+      load();
+    } catch (e) {
+      setMessage({ type: 'critical', text: 'Failed to remove snippet: ' + e.message });
+    } finally {
+      setRemovingSnippet(false);
+    }
+  };
+
   const handleUninstall = async () => {
     if (!window.confirm(
-      'This will remove the storefront script from your Shopify store.\n\n' +
-      'Do this BEFORE deleting the app in the Shopify Dev Dashboard to ensure no broken code is left on your storefront.'
+      'This will remove the storefront script AND the flash-fix snippet from your Shopify store.\n\n' +
+      'Do this BEFORE deleting the app in the Shopify Dev Dashboard.'
     )) return;
     setUninstalling(true);
     setMessage(null);
     try {
+      // Remove theme snippet first
+      try { await api.removeThemeSnippet(); } catch {}
       const result = await api.uninstall();
       if (result.success) {
-        setMessage({
-          type: 'success',
-          text: 'Cleanup complete. The storefront script has been removed from your store. You can now safely delete this app in the Shopify Dev Dashboard.',
-        });
+        setMessage({ type: 'success', text: 'Cleanup complete. You can now safely delete this app.' });
       } else {
-        setMessage({
-          type: 'warning',
-          text: 'Cleanup finished with some issues: ' + (result.results?.errors?.join(', ') || 'unknown'),
-        });
+        setMessage({ type: 'warning', text: 'Cleanup finished with some issues: ' + (result.results?.errors?.join(', ') || 'unknown') });
       }
       load();
     } catch (e) {
@@ -83,8 +113,23 @@ export default function ScriptPage() {
     }
   };
 
+  const manualSnippet = `<!-- rpl-flash-fix:start -->
+{%- comment -%}Rothley Price Lock — flash-fix CSS{%- endcomment -%}
+<style id="rpl-flash-fix">
+  .rpl-hiding .price-wrapper,
+  .rpl-hiding .price,
+  .rpl-hiding .product__price,
+  .rpl-hiding form[action="/cart/add"] [type="submit"],
+  .rpl-hiding form[action="/cart/add"] button[name="add"],
+  .rpl-hiding .product-form__submit,
+  .rpl-hiding .quick-add__submit {
+    visibility: hidden !important;
+  }
+</style>
+<script>document.documentElement.className += ' rpl-hiding';</script>
+<!-- rpl-flash-fix:end -->`;
+
   const manualScriptTag = `<script src="${HOST}/storefront-script.js" defer></script>`;
-  const themeSnippet = `{% comment %} Rothley Price Lock — add to theme.liquid <head> {% endcomment %}\n<script src="{{ '${HOST}/storefront-script.js' }}" defer></script>`;
 
   if (loading) {
     return (
@@ -96,9 +141,9 @@ export default function ScriptPage() {
     );
   }
 
-  // script-status endpoint returns { registered, scriptTagId }
-  const isRegistered = !!(settings && settings.registered);
-  const scriptTagId = settings && settings.scriptTagId;
+  const isRegistered = !!(scriptStatus && scriptStatus.registered);
+  const scriptTagId = scriptStatus && scriptStatus.scriptTagId;
+  const snippetInjected = !!(themeStatus && themeStatus.injected);
 
   return (
     <Page
@@ -114,65 +159,35 @@ export default function ScriptPage() {
           </Layout.Section>
         )}
 
-        {/* Auto-registration info banner */}
-        {!isRegistered && (
-          <Layout.Section>
-            <Banner tone="info">
-              <p>
-                <strong>Auto-registration:</strong> The script tag is automatically registered when the app
-                first loads. If the status below shows "Not Installed", click Register to install it manually.
-              </p>
-            </Banner>
-          </Layout.Section>
-        )}
-
-        {/* Status card */}
+        {/* ── Step 1: Script Tag ──────────────────────────────────────────── */}
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <BlockStack gap="100">
-                  <Text variant="headingMd">Storefront Script Status</Text>
+                  <Text variant="headingMd">Step 1 — Storefront Script</Text>
                   <Text tone="subdued">
-                    The script is injected via Shopify's ScriptTag API and runs on every storefront page.
+                    Registers the price lock script with Shopify via the ScriptTag API.
                   </Text>
                 </BlockStack>
                 <Badge tone={isRegistered ? 'success' : 'critical'}>
-                  {isRegistered ? 'Active' : 'Not Installed'}
+                  {isRegistered ? 'Registered' : 'Not Registered'}
                 </Badge>
               </InlineStack>
 
               {isRegistered && scriptTagId && (
-                <Text tone="subdued" variant="bodySm">
-                  Script Tag ID: {scriptTagId}
-                </Text>
+                <Text tone="subdued" variant="bodySm">Script Tag ID: {scriptTagId}</Text>
               )}
 
               <InlineStack gap="300">
-                {!isRegistered && (
-                  <Button
-                    variant="primary"
-                    loading={registering}
-                    onClick={handleRegister}
-                  >
+                {!isRegistered ? (
+                  <Button variant="primary" loading={registering} onClick={handleRegister}>
                     Register Script on Store
                   </Button>
-                )}
-                {isRegistered && (
+                ) : (
                   <>
-                    <Button
-                      loading={registering}
-                      onClick={handleRegister}
-                    >
-                      Re-register / Update
-                    </Button>
-                    <Button
-                      tone="critical"
-                      loading={removing}
-                      onClick={handleRemove}
-                    >
-                      Remove from Store
-                    </Button>
+                    <Button loading={registering} onClick={handleRegister}>Re-register / Update</Button>
+                    <Button tone="critical" loading={removing} onClick={handleRemove}>Remove from Store</Button>
                   </>
                 )}
               </InlineStack>
@@ -180,90 +195,107 @@ export default function ScriptPage() {
           </Card>
         </Layout.Section>
 
-        {/* Manual install option */}
+        {/* ── Step 2: Flash Fix ───────────────────────────────────────────── */}
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
-              <Text variant="headingMd">Manual Installation (Alternative)</Text>
-              <Text tone="subdued">
-                If you prefer to add the script directly to your theme code rather than using the
-                ScriptTag API, copy one of the snippets below.
-              </Text>
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text variant="headingMd">Step 2 — Flash Fix (Recommended)</Text>
+                  <Text tone="subdued">
+                    Adds a tiny CSS snippet to your theme so prices are hidden <em>before</em> the
+                    page paints — eliminating the flash where prices briefly appear. One click, fully reversible.
+                  </Text>
+                </BlockStack>
+                <Badge tone={snippetInjected ? 'success' : 'warning'}>
+                  {snippetInjected ? 'Active' : 'Not Applied'}
+                </Badge>
+              </InlineStack>
 
-              <BlockStack gap="200">
-                <Text variant="headingSm">Option A — Raw script tag</Text>
-                <Text tone="subdued" variant="bodySm">
-                  Add to your theme's <code>layout/theme.liquid</code> inside the &lt;head&gt; tag.
-                </Text>
-                <div style={{ background: '#1a1a1a', borderRadius: '8px', padding: '16px', fontFamily: 'monospace', fontSize: '13px', color: '#e2e8f0', overflowX: 'auto' }}>
-                  <pre style={{ margin: 0 }}>{manualScriptTag}</pre>
-                </div>
-                <Button size="slim" onClick={() => navigator.clipboard.writeText(manualScriptTag)}>
-                  Copy
-                </Button>
-              </BlockStack>
+              {!snippetInjected && (
+                <Banner tone="info">
+                  <p>
+                    Without this, the price is briefly visible for ~1–2 seconds while the script loads.
+                    Click <strong>Apply Flash Fix</strong> to automatically add the snippet to your
+                    live theme's <code>theme.liquid</code>.
+                  </p>
+                </Banner>
+              )}
 
-              <BlockStack gap="200">
-                <Text variant="headingSm">Option B — Liquid snippet with comment</Text>
-                <div style={{ background: '#1a1a1a', borderRadius: '8px', padding: '16px', fontFamily: 'monospace', fontSize: '13px', color: '#e2e8f0', overflowX: 'auto' }}>
-                  <pre style={{ margin: 0 }}>{themeSnippet}</pre>
-                </div>
-                <Button size="slim" onClick={() => navigator.clipboard.writeText(themeSnippet)}>
-                  Copy
-                </Button>
-              </BlockStack>
+              {snippetInjected && (
+                <Banner tone="success">
+                  <p>Flash fix is active. Prices and Add to Cart buttons are hidden the instant the page starts loading.</p>
+                </Banner>
+              )}
+
+              <InlineStack gap="300">
+                {!snippetInjected ? (
+                  <Button variant="primary" loading={injecting} onClick={handleInjectSnippet}>
+                    Apply Flash Fix to Theme
+                  </Button>
+                ) : (
+                  <Button tone="critical" loading={removingSnippet} onClick={handleRemoveSnippet}>
+                    Remove Flash Fix from Theme
+                  </Button>
+                )}
+              </InlineStack>
             </BlockStack>
           </Card>
         </Layout.Section>
 
-        {/* Config endpoint */}
+        {/* ── Manual snippet ──────────────────────────────────────────────── */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text variant="headingMd">Manual Theme Snippet (Alternative)</Text>
+              <Text tone="subdued">
+                If the automatic injection doesn't work, copy this snippet and paste it as the very
+                first line inside the <code>&lt;head&gt;</code> tag in your <code>layout/theme.liquid</code>.
+              </Text>
+              <div style={{ background: '#1a1a1a', borderRadius: '8px', padding: '16px', fontFamily: 'monospace', fontSize: '12px', color: '#e2e8f0', overflowX: 'auto' }}>
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{manualSnippet}</pre>
+              </div>
+              <Button size="slim" onClick={() => navigator.clipboard.writeText(manualSnippet)}>
+                Copy Snippet
+              </Button>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* ── Config endpoint ─────────────────────────────────────────────── */}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
               <Text variant="headingMd">Config Endpoint</Text>
               <Text tone="subdued">
-                The storefront script loads rules in real time from this endpoint. No theme changes
-                are needed when you update rules — they take effect immediately.
+                The storefront script loads rules in real time from this endpoint. Rules update instantly — no theme changes needed.
               </Text>
               <div style={{ background: '#f1f1f1', borderRadius: '6px', padding: '10px 14px', fontFamily: 'monospace', fontSize: '13px' }}>
                 {HOST}/api/config.json
               </div>
-              <Button
-                size="slim"
-                onClick={() => window.open(`${HOST}/api/config.json`, '_blank')}
-              >
+              <Button size="slim" onClick={() => window.open(`${HOST}/api/config.json`, '_blank')}>
                 View Current Config
               </Button>
             </BlockStack>
           </Card>
         </Layout.Section>
 
-        {/* Uninstall / cleanup section */}
+        {/* ── Uninstall ───────────────────────────────────────────────────── */}
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
               <BlockStack gap="100">
                 <Text variant="headingMd">Before You Uninstall</Text>
                 <Text tone="subdued">
-                  If you plan to remove this app from your Shopify store, click the button below first.
-                  This cleans up the storefront script so it doesn't leave broken code running on your store
-                  after the app is deleted.
+                  Removes the script tag AND the flash-fix snippet from your theme before you delete the app.
                 </Text>
               </BlockStack>
-
               <Banner tone="warning">
                 <p>
-                  <strong>Always run this cleanup before deleting the app</strong> in the Shopify Dev Dashboard.
-                  If you delete the app without cleaning up, the script tag will keep trying to load from a
-                  URL that no longer responds.
+                  <strong>Always run cleanup before deleting the app</strong> in the Shopify Dev Dashboard.
                 </p>
               </Banner>
-
-              <Button
-                tone="critical"
-                loading={uninstalling}
-                onClick={handleUninstall}
-              >
+              <Button tone="critical" loading={uninstalling} onClick={handleUninstall}>
                 Prepare for Uninstall — Remove All App Code from Store
               </Button>
             </BlockStack>
